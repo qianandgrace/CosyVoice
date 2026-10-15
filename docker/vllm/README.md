@@ -10,6 +10,9 @@ GPU 直通跑，并提供一个开关用来对比 **ttsfrd → wetext → 内置
 - 权重：**挂载**宿主机 `pretrained_models/`，不烘进镜像
 - 对外：CLI 脚本、三档对比工具、FastAPI HTTP 服务、Gradio WebUI
 
+> **只想用、不想读部署细节 → 看 [USAGE.md](USAGE.md)**（拉起服务、WebUI 各个模式怎么填、
+> 单条推理、换音色、已知的坑，都在那一份里）。
+
 ---
 
 ## 1. 前置条件
@@ -79,6 +82,11 @@ docker compose -f docker/vllm/docker-compose.yml --profile ui up -d webui
 # 单次 vLLM 推理 + RTF 统计
 docker compose -f docker/vllm/docker-compose.yml --profile tools run --rm infer
 ```
+
+> WebUI 跑的是 `docker/vllm/scripts/serve_webui.py`，不是上游的 `webui.py`。
+> 上游那个面向 CosyVoice-300M：它的「自然语言控制」走 `inference_instruct`（需要预置音色，
+> v3 没有），且构造模型时不带 vLLM。新的这个只列出 v3 真能跑的模式、通过
+> `inference_instruct2` 提供指令控制、并且走 vLLM 加速。用法见 [USAGE.md](USAGE.md)。
 
 > **一次只跑一个加载模型的服务。** 每个服务都会把整条链路放进显存（约 4–5 GB），
 > 8 GB 卡上 `api` 和 `webui` 同时开会 OOM。所以 `webui` / 工具类服务都放在
@@ -223,11 +231,13 @@ docker/vllm/
 ├── docker-compose.yml            # api / webui / infer / compare
 ├── requirements.docker.txt       # requirements.txt 的推理子集（见文件内注释）
 ├── fetch_assets.sh               # 拉取挂载用的模型与前端资源
-├── README.md
+├── README.md                     # 部署 / 构建 / 迁移
+├── USAGE.md                      # 使用手册：怎么起、怎么用、怎么排坑
 └── scripts/
     ├── vllm_infer.py             # vLLM 零样本推理 + RTF
     ├── compare_frontend.py       # 三档文本前端对比
-    └── serve_fastapi.py          # FastAPI（复用上游 server.py）
+    ├── serve_fastapi.py          # FastAPI（复用上游 server.py）
+    └── serve_webui.py            # Gradio WebUI（v3 专用，支持指令控制 + vLLM）
 ```
 
 同时改动了仓库里两处代码，用于支撑上面的开关：
@@ -241,3 +251,8 @@ docker/vllm/
 24000/16000 各取一次），传 tensor 会抛 `TypeError: Invalid file: tensor([[...]])`。
 这个问题在 `docker/vllm/scripts/serve_fastapi.py` 里修：启动时摘掉三个带 prompt 音频的路由，
 换成把上传落临时文件、传路径、流结束后删除的版本。
+
+上游 `webui.py` 同样没改，只是 compose 的 `webui` 服务不再用它（改用
+`docker/vllm/scripts/serve_webui.py`）。原文件还在，直接
+`python webui.py --model_dir pretrained_models/Fun-CosyVoice3-0.5B` 仍然能跑，
+只是 v3 下只有「3s极速复刻」和「跨语种复刻」可用，也没有 vLLM 加速。
