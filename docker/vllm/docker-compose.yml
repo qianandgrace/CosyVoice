@@ -1,0 +1,81 @@
+# CosyVoice3 + vLLM on Docker Desktop.
+#
+#   docker compose -f docker/vllm/docker-compose.yml build          # build the image
+#   docker compose -f docker/vllm/docker-compose.yml up -d          # FastAPI on :50000
+#   docker compose -f docker/vllm/docker-compose.yml --profile ui up -d webui
+#   docker compose -f docker/vllm/docker-compose.yml --profile tools run --rm compare
+#
+# Only run one model-loading service at a time: each one holds the full
+# pipeline in VRAM (roughly 4-5 GB), so api + webui will not fit together on an
+# 8 GB card.
+#
+# Frontend comparison is driven by the COSYVOICE_TEXT_FRONTEND env var:
+#   COSYVOICE_TEXT_FRONTEND=ttsfrd docker compose ... --profile tools run --rm compare
+#   COSYVOICE_TEXT_FRONTEND=wetext ...
+#   COSYVOICE_TEXT_FRONTEND=none   ...
+# `compare` overrides this itself, forcing each mode in turn.
+
+name: cosyvoice-vllm
+
+x-cosyvoice: &cosyvoice
+  image: cosyvoice-vllm:0.11.0
+  ipc: host
+  shm_size: "2gb"
+  environment:
+    # Empty means "degrade automatically": ttsfrd -> wetext -> built-in rules.
+    COSYVOICE_TEXT_FRONTEND: "${COSYVOICE_TEXT_FRONTEND:-}"
+    COSYVOICE_LOAD_VLLM: "${COSYVOICE_LOAD_VLLM:-1}"
+    COSYVOICE_MODEL_DIR: "${COSYVOICE_MODEL_DIR:-pretrained_models/Fun-CosyVoice3-0.5B}"
+    # Points wetext at the bind-mounted FST files; without it wetext tries the
+    # modelscope API, which now 403s for anonymous downloads.
+    COSYVOICE_WETEXT_DIR: /workspace/CosyVoice/pretrained_models/wetext
+  volumes:
+    # Writable on purpose: the first vLLM run exports the LLM to
+    # <model_dir>/vllm/ and reuses it afterwards.
+    - ../../pretrained_models:/workspace/CosyVoice/pretrained_models
+    - ../../output:/workspace/CosyVoice/output
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  api:
+    <<: *cosyvoice
+    container_name: cosyvoice-api
+    build:
+      context: ../..
+      dockerfile: docker/vllm/Dockerfile
+      args:
+        VLLM_VERSION: "0.11.0"
+        INSTALL_VLLM: "1"
+    ports:
+      - "50000:50000"
+    command: python docker/vllm/scripts/serve_fastapi.py --port 50000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:50000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 5
+
+  webui:
+    <<: *cosyvoice
+    container_name: cosyvoice-webui
+    profiles: ["ui"]
+    ports:
+      - "50001:50001"
+    command: python webui.py --port 50001 --model_dir pretrained_models/Fun-CosyVoice3-0.5B
+
+  infer:
+    <<: *cosyvoice
+    profiles: ["tools"]
+    command: python docker/vllm/scripts/vllm_infer.py --iters 3
+
+  compare:
+    <<: *cosyvoice
+    profiles: ["tools"]
+    command: python docker/vllm/scripts/compare_frontend.py --synthesize

@@ -1,0 +1,24 @@
+# Build context is the repo root. Model weights and generated artifacts are
+# bind-mounted at run time instead of being copied in, so keep them out of the
+# context (pretrained_models alone is >1 GB and would otherwise be tarred up on
+# every build).
+.git
+.github
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.idea
+.vscode
+
+pretrained_models
+exp
+data
+raw_wav
+tensorboard
+output
+
+*.wav
+*.m4a
+*.aac
+*.tar
+*.zip

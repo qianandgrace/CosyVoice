@@ -53,26 +53,43 @@ class CosyVoiceFrontEnd:
         self.allowed_special = allowed_special
         self.inflect_parser = inflect.engine()
         # NOTE compatible when no text frontend tool is avaliable
-        try:
-            import ttsfrd
-            self.frd = ttsfrd.TtsFrontendEngine()
-            ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-            assert self.frd.initialize('{}/../../pretrained_models/CosyVoice-ttsfrd/resource'.format(ROOT_DIR)) is True, \
-                'failed to initialize ttsfrd resource'
-            self.frd.set_lang_type('pinyinvg')
-            self.text_frontend = 'ttsfrd'
-            logging.info('use ttsfrd frontend')
-        except:
+        # NOTE COSYVOICE_TEXT_FRONTEND pins one frontend instead of degrading: ttsfrd / wetext / none
+        forced_frontend = os.environ.get('COSYVOICE_TEXT_FRONTEND', '').strip().lower()
+        self.text_frontend = ''
+        if forced_frontend in ('', 'ttsfrd'):
+            try:
+                import ttsfrd
+                self.frd = ttsfrd.TtsFrontendEngine()
+                ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+                assert self.frd.initialize('{}/../../pretrained_models/CosyVoice-ttsfrd/resource'.format(ROOT_DIR)) is True, \
+                    'failed to initialize ttsfrd resource'
+                self.frd.set_lang_type('pinyinvg')
+                self.text_frontend = 'ttsfrd'
+                logging.info('use ttsfrd frontend')
+            except Exception as e:
+                logging.info('ttsfrd frontend unavailable: {}'.format(e))
+        if self.text_frontend == '' and forced_frontend in ('', 'wetext'):
             try:
                 from wetext import Normalizer as ZhNormalizer
                 from wetext import Normalizer as EnNormalizer
-                self.zh_tn_model = ZhNormalizer(remove_erhua=False)
-                self.en_tn_model = EnNormalizer()
+                # NOTE COSYVOICE_WETEXT_DIR points at a local FST dir, avoiding the modelscope download
+                wetext_dir = os.environ.get('COSYVOICE_WETEXT_DIR', '').strip()
+                if wetext_dir != '':
+                    self.zh_tn_model = ZhNormalizer(tagger_path='{}/zh/tn/tagger.fst'.format(wetext_dir),
+                                                    verbalizer_path='{}/zh/tn/verbalizer.fst'.format(wetext_dir),
+                                                    lang='zh')
+                    self.en_tn_model = EnNormalizer(tagger_path='{}/en/tn/tagger.fst'.format(wetext_dir),
+                                                    verbalizer_path='{}/en/tn/verbalizer.fst'.format(wetext_dir),
+                                                    lang='en')
+                else:
+                    self.zh_tn_model = ZhNormalizer(remove_erhua=False)
+                    self.en_tn_model = EnNormalizer()
                 self.text_frontend = 'wetext'
                 logging.info('use wetext frontend')
-            except:
-                self.text_frontend = ''
-                logging.info('no frontend is avaliable')
+            except Exception as e:
+                logging.info('wetext frontend unavailable: {}'.format(e))
+        if self.text_frontend == '':
+            logging.info('no frontend is avaliable')
 
 
     def _extract_text_token(self, text):
